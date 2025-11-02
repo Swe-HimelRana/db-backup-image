@@ -1,4 +1,4 @@
-# Database Backup Tool — Instructions
+# Database Backup Tool — Instructions (v2)
 
 This Docker image provides an **all-in-one backup utility** for multiple database engines:
 
@@ -8,7 +8,7 @@ This Docker image provides an **all-in-one backup utility** for multiple databas
 * **Redis**
 
 It uses built-in clients (`mysqldump`, `pg_dump`, `mongodump`, `redis-cli`)
-and supports remote uploads via **rclone** or **s3cmd**.
+and supports remote uploads via **rclone** (pCloud, S3, Dropbox, etc.) or **s3cmd**.
 
 ---
 
@@ -23,36 +23,39 @@ This image is designed for automated backups — for example:
 You only need to provide **root/superuser credentials**, and it will:
 
 1. Dump **all databases** from the selected DB type
-2. Create a compressed `.tar.gz` archive
-3. Optionally upload it to your remote storage (S3, GCS, Dropbox, etc.)
+2. Create a compressed `.tar.gz` archive (named like `11-12-1996-mysql.tar.gz`)
+3. Optionally upload it to your remote storage (S3, pCloud, GCS, Dropbox, etc.)
+4. Automatically **delete old backups** (retention policy)
 
 ---
 
 ## ⚙️ Environment Variables
 
-| Variable        | Required | Description                                                     |         |
-| --------------- | -------- | --------------------------------------------------------------- | ------- |
-| `DB_TYPE`       | ✅        | Database type — one of: `mysql`, `postgres`, `mongodb`, `redis` |         |
-| `DB_HOST`       | ✅        | Database hostname or IP                                         |         |
-| `DB_PORT`       | ❌        | Port (defaults per DB: 3306, 5432, 27017, 6379)                 |         |
-| `DB_USER`       | ✅        | Root or superuser name                                          |         |
-| `DB_PASSWORD`   | ✅        | Password for the above user                                     |         |
-| `MONGO_URI`     | ❌        | Full MongoDB connection URI (overrides host/user/pass)          |         |
-| `BACKUP_DIR`    | ❌        | Local backup directory (default: `/backup/output`)              |         |
-| `BACKUP_PREFIX` | ❌        | Archive name prefix (default: `backup`)                         |         |
-| `COMPRESS`      | ❌        | Compression type: `gzip` or `none`                              |         |
-| `KEEP_LOCAL`    | ❌        | If `false`, deletes local copy after upload                     |         |
-| `RCLONE_REMOTE` | ❌        | Destination remote for rclone (e.g., `s3:mybucket/backups`)     |         |
-| `RCLONE_FLAGS`  | ❌        | Extra flags for rclone (default optimized for S3)               |         |
-| `S3_URL`        | ❌        | Destination URL for s3cmd (e.g., `s3://mybucket/backups/`)      |         |
-| `S3CMD_OPTS`    | ❌        | Extra flags for s3cmd upload                                    |         |
-| `DBS_EXCLUDE`   | ❌        | Regex to skip certain DBs (e.g. `^(test                         | dev_)`) |
+| Variable         | Required | Description                                                     |         |
+| ---------------- | -------- | --------------------------------------------------------------- | ------- |
+| `DB_TYPE`        | ✅        | Database type — one of: `mysql`, `postgres`, `mongodb`, `redis` |         |
+| `DB_HOST`        | ✅        | Database hostname or IP                                         |         |
+| `DB_PORT`        | ❌        | Port (defaults per DB: 3306, 5432, 27017, 6379)                 |         |
+| `DB_USER`        | ✅        | Root or superuser name                                          |         |
+| `DB_PASSWORD`    | ✅        | Password for the above user                                     |         |
+| `MONGO_URI`      | ❌        | Full MongoDB connection URI (overrides host/user/pass)          |         |
+| `BACKUP_DIR`     | ❌        | Local backup directory (default: `/backup/output`)              |         |
+| `BACKUP_PREFIX`  | ❌        | Internal folder prefix (default: `backup`)                      |         |
+| `BACKUP_NAME`    | ❌        | Name used in final filename (default: DB_TYPE)                  |         |
+| `COMPRESS`       | ❌        | Compression type: `gzip` or `none`                              |         |
+| `KEEP_LOCAL`     | ❌        | If `false`, deletes local copy after upload                     |         |
+| `RCLONE_REMOTE`  | ❌        | Destination remote for rclone (e.g., `pcloud:MyBackups/db`)     |         |
+| `RCLONE_FLAGS`   | ❌        | Extra flags for rclone (default optimized for S3)               |         |
+| `S3_URL`         | ❌        | Destination URL for s3cmd (e.g., `s3://mybucket/backups/`)      |         |
+| `S3CMD_OPTS`     | ❌        | Extra flags for s3cmd upload                                    |         |
+| `RETENTION_DAYS` | ❌        | Automatically delete remote backups older than N days           |         |
+| `DBS_EXCLUDE`    | ❌        | Regex to skip certain DBs (e.g. `^(test                         | dev_)`) |
 
 ---
 
 ## 🚀 Basic Usage (Docker CLI)
 
-### MySQL example
+### Example — MySQL with pCloud Retention
 
 ```bash
 docker run --rm \
@@ -60,13 +63,15 @@ docker run --rm \
   -e DB_HOST=mysql.local \
   -e DB_USER=root \
   -e DB_PASSWORD=secret \
-  -e RCLONE_REMOTE="s3:my-bucket/mysql" \
+  -e RCLONE_REMOTE="pcloud:Backups/mysql" \
+  -e RETENTION_DAYS=15 \
+  -e KEEP_LOCAL=false \
   -v /path/to/rclone.conf:/home/backup/.config/rclone/rclone.conf:ro \
   -v $(pwd)/backups:/backup/output \
   yourname/db-backup:latest
 ```
 
-### PostgreSQL example
+### Example — PostgreSQL with S3 Upload
 
 ```bash
 docker run --rm \
@@ -80,26 +85,28 @@ docker run --rm \
   yourname/db-backup:latest
 ```
 
-### MongoDB example
+### Example — MongoDB using URI
 
 ```bash
 docker run --rm \
   -e DB_TYPE=mongodb \
   -e MONGO_URI="mongodb://root:secret@mongo.local:27017" \
   -e RCLONE_REMOTE="s3:my-bucket/mongo" \
+  -e RETENTION_DAYS=30 \
   -v /path/to/rclone.conf:/home/backup/.config/rclone/rclone.conf:ro \
   -v $(pwd)/backups:/backup/output \
   yourname/db-backup:latest
 ```
 
-### Redis example
+### Example — Redis Dump
 
 ```bash
 docker run --rm \
   -e DB_TYPE=redis \
   -e DB_HOST=redis.local \
   -e DB_PASSWORD=secret \
-  -e RCLONE_REMOTE="s3:my-bucket/redis" \
+  -e RCLONE_REMOTE="pcloud:Backups/redis" \
+  -e RETENTION_DAYS=10 \
   -v /path/to/rclone.conf:/home/backup/.config/rclone/rclone.conf:ro \
   -v $(pwd)/backups:/backup/output \
   yourname/db-backup:latest
@@ -109,7 +116,7 @@ docker run --rm \
 
 ## ☁️ Using in Kubernetes CronJob
 
-You can schedule automatic backups using a Kubernetes `CronJob`:
+Automate daily backups with retention cleanup:
 
 ```yaml
 apiVersion: batch/v1
@@ -144,7 +151,9 @@ spec:
                       name: mysql-secret
                       key: password
                 - name: RCLONE_REMOTE
-                  value: "s3:my-backups/mysql"
+                  value: "pcloud:Backups/mysql"
+                - name: RETENTION_DAYS
+                  value: "15"
                 - name: KEEP_LOCAL
                   value: "false"
               volumeMounts:
@@ -162,45 +171,52 @@ spec:
 
 ---
 
-## 📦 Output
+## 📦 Output Structure
 
-Each run produces a timestamped archive:
+Each run produces a date-first archive:
 
 ```
 /backup/output/
-  ├── backup-mysql-2025-11-02T03:00:00Z.tar.gz
-  ├── backup-postgres-2025-11-02T03:00:00Z.tar.gz
+  ├── 02-11-2025-mysql.tar.gz
+  ├── 02-11-2025-postgres.tar.gz
   └── ...
 ```
 
 The archive contains:
 
-* One folder per DB engine (mysql, postgres, mongodb, redis)
-* Inside each: per-database dumps or data snapshots
+* Folder per DB engine (mysql, postgres, mongodb, redis)
+* Inside each: per-database dump files or data snapshots
 
 ---
 
-## 🧩 Remote Upload Options
+## 🧩 Remote Upload & Retention
 
-### Option 1 — rclone
+### rclone (Recommended)
 
-Supports any backend rclone supports (S3, GCS, Dropbox, etc.).
-Mount your `rclone.conf` at:
+* Works with **pCloud**, **S3**, **Google Drive**, **Dropbox**, **Backblaze**, and more.
+* Mount your `rclone.conf` file at:
 
-```
-/home/backup/.config/rclone/rclone.conf
-```
+  ```
+  /home/backup/.config/rclone/rclone.conf
+  ```
 
-Example command inside container:
+#### Automatic Retention:
+
+If `RETENTION_DAYS` is set, the container will automatically:
 
 ```bash
-rclone copy /backup/output s3:my-bucket/backups --progress
+rclone delete "${RCLONE_REMOTE}" --min-age ${RETENTION_DAYS}d --include "*-<name>.*"
+rclone rmdirs "${RCLONE_REMOTE}"
 ```
 
-### Option 2 — s3cmd
+💡 Example: `RETENTION_DAYS=15` keeps only the last 15 days of backups in your pCloud/S3 folder.
 
-Supports AWS S3 or S3-compatible storage.
-Mount your `.s3cfg` file at:
+---
+
+### s3cmd (Alternative)
+
+Supports **AWS S3** and **S3-compatible** services.
+Mount your `.s3cfg` at:
 
 ```
 /home/backup/.s3cfg
@@ -209,47 +225,51 @@ Mount your `.s3cfg` file at:
 Example:
 
 ```bash
-s3cmd put /backup/output/backup*.gz s3://my-bucket/backups/
+s3cmd put /backup/output/*.gz s3://my-bucket/backups/
 ```
+
+> 🔸 For retention with `s3cmd`, use your cloud provider’s **lifecycle policies**.
 
 ---
 
-## 🧹 Retention (Optional)
+## 🧹 Cleanup Behavior
 
-You can add cleanup after upload by extending your CronJob:
+At the end of each run:
 
-```bash
-rclone delete "${RCLONE_REMOTE}" --min-age 14d --rmdirs
-```
-
-This keeps only the last 14 days of backups.
+* Temporary directories are deleted.
+* Local archives are removed (if `KEEP_LOCAL=false` and upload succeeded).
+* Remote files older than `RETENTION_DAYS` are automatically deleted.
+* All actions and outcomes are logged with timestamps.
 
 ---
 
 ## 🧰 Troubleshooting
 
-| Symptom                                 | Possible cause                                              |
+| Symptom                                 | Possible Cause                                              |
 | --------------------------------------- | ----------------------------------------------------------- |
-| `Access denied` (MySQL/Postgres)        | Wrong `DB_USER`/`DB_PASSWORD` or missing root role          |
-| `rclone: command not found`             | Image build incomplete or wrong tag                         |
-| `Permission denied` on `/backup/output` | Mount path not writable for UID 10001                       |
+| `Access denied`                         | Wrong credentials or insufficient privileges                |
+| `rclone: command not found`             | Image build incomplete or outdated                          |
+| `Permission denied` on `/backup/output` | Volume not writable for UID 10001                           |
 | Backup empty                            | DB has no accessible databases or filtered by `DBS_EXCLUDE` |
+| Remote cleanup skipped                  | `RETENTION_DAYS` not set or `RCLONE_REMOTE` missing         |
 
 ---
 
 ## 🏁 Summary
 
-✅ One image for all DB types
-✅ Dumps **all databases** with root credentials
-✅ Easy to use with **rclone** or **s3cmd**
-✅ Perfect for **Kubernetes CronJobs** or **Docker automation**
+✅ One image for all major databases
+✅ Dumps **all databases** securely
+✅ Supports **rclone** (pCloud, S3, Dropbox, etc.) and **s3cmd**
+✅ Includes **automatic retention cleanup**
+✅ Fully compatible with **Kubernetes CronJobs**
 
-Enjoy automated, versioned, and cloud-ready database backups!
+Enjoy automated, versioned, and cloud-retained database backups!
+
+---
 
 ## About
 
-I'm **Himel**, a Software Engineer passionate about building efficient and optimized solutions.
-
-If you contribute or enhance this project by adding new features or improving performance, your efforts will be recognized and greatly appreciated.
+I'm **Himel**, a Software Engineer passionate about building efficient and optimized automation solutions.
+If you enhance this project or add new database integrations, your contribution will be recognized and appreciated.
 
 📧 **Contact:** [contact@himelrana.com](mailto:contact@himelrana.com)
